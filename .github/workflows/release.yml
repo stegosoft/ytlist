@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        working-directory: src-tauri
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Install WiX Toolset
+        run: choco install wixtoolset --no-progress -y
+
+      - name: Build release binary
+        working-directory: src-tauri
+        run: cargo build --release
+
+      - name: Build MSI bundle
+        working-directory: src-tauri
+        run: cargo tauri build --bundles msi
+
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart("v")
+          $archiveDir = "dist/ytlist-${tag}-windows-x64"
+          New-Item -ItemType Directory -Force -Path $archiveDir | Out-Null
+          Copy-Item "src-tauri/target/release/ytlist.exe" "dist/ytlist-${tag}-windows-x64.exe"
+          Copy-Item "src-tauri/target/release/bundle/msi/ytlist_${version}_x64_en-US.msi" "dist/ytlist-${tag}-windows-x64.msi"
+          Copy-Item "dist/ytlist-${tag}-windows-x64.exe" "$archiveDir/ytlist.exe"
+          Copy-Item "README.md" "$archiveDir/README.md"
+          Copy-Item "LICENSE" "$archiveDir/LICENSE"
+          Compress-Archive -Path "$archiveDir/*" -DestinationPath "dist/ytlist-${tag}-windows-x64.zip" -Force
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ytlist ${{ github.ref_name }}
+          files: |
+            dist/ytlist-*.exe
+            dist/ytlist-*.msi
+            dist/ytlist-*.zip
+          generate_release_notes: true
